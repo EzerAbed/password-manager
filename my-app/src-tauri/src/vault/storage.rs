@@ -42,9 +42,26 @@ pub fn save_vault(vault: &Vault, password: &str, path: &PathBuf) -> Result<(), S
 }
 
 pub fn load_vault(password: &str, path: &PathBuf) -> Result<Vault, String> {
-    // 1. read file bytes
-    // 2. split out salt, nonce, ciphertext
-    // 3. derive key from password + salt
-    // 4. decrypt ciphertext
-    // 5. deserialize JSON back into Vault
+    // read file bytes
+    let crypted_data = fs::read(path).map_err(|e| e.to_string())?;
+
+    // split out salt, nonce, ciphertext
+    let salt = &crypted_data[0..16];
+    let nonce_bytes = &crypted_data[16..28];
+    let ciphertext = &crypted_data[28..];
+
+    // derive key from password + salt
+    let mut key = [0u8; 32];
+    pbkdf2_hmac::<Sha256>(password.as_bytes(), &salt, PBKDF2_ROUNDS, &mut key); 
+
+    // decrypt ciphertext
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let decrypted_data = cipher.decrypt(nonce, ciphertext).map_err(|_| "Incorrect password or corrupted file".to_string())?;
+
+    // deserialize JSON back into Vault
+    let json = String::from_utf8(decrypted_data).map_err(|e| e.to_string())?;
+    let vault = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+
+    Ok(vault)
 }
